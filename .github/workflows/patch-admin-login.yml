@@ -1,0 +1,119 @@
+name: Patch admin login runtime guard
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/patch-admin-login.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch bundled Worker admin JS
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="workers/contractor-v004/contractor-v004-template.js"
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("workers/contractor-v004/contractor-v004-template.js")
+          s = p.read_text()
+          changed = False
+
+          s2 = s.replace('var WORKER = "contractor-v003-2-afo";', 'var WORKER = "contractor-v004-template";', 1)
+          changed = changed or s2 != s
+          s = s2
+
+          s2 = s.replace('var contractor_v003_2_afo_default = {', 'var contractor_v004_template_default = {', 1)
+          changed = changed or s2 != s
+          s = s2
+          s2 = s.replace('contractor_v003_2_afo_default as default', 'contractor_v004_template_default as default', 1)
+          changed = changed or s2 != s
+          s = s2
+          s2 = s.replace('//# sourceMappingURL=contractor-v003-2-afo.js.map', '//# sourceMappingURL=contractor-v004-template.js.map', 1)
+          changed = changed or s2 != s
+          s = s2
+
+          # Ensure cmsData exists immediately after PASS in the browser jsLines array.
+          needle = "    'var PASS=\"' + ADMIN_PASS + '\";',\n"
+          insert = needle + "    'var cmsData={};',\n"
+          if needle in s and "    'var cmsData={};'," not in s and '"var cmsData={};",' not in s:
+              s = s.replace(needle, insert, 1)
+              changed = True
+
+          # Make the login/bootstrap IIFE resilient to storage and missing-element errors.
+          old = """    'function unlock(){document.getElementById(\"lock\").style.display=\"none\";document.getElementById(\"app\").style.display=\"block\";loadAll();}',
+    'function tryLogin(){var pw=document.getElementById(\"pw\").value;if(pw===PASS){sessionStorage.setItem(\"ccs_admin_v2\",\"1\");unlock();}else{document.getElementById(\"pwErr\").style.display=\"block\";document.getElementById(\"pw\").value=\"\";}}',
+    // IIFE â script is at bottom of body, DOM is ready
+    \"(function(){\",
+    '  var authed=sessionStorage.getItem(\"ccs_admin_v2\")===\"1\";',
+    '  document.getElementById(\"pwBtn\").addEventListener(\"click\",tryLogin);',
+    '  document.getElementById(\"pw\").addEventListener(\"keydown\",function(e){if(e.key===\"Enter\")tryLogin();});',
+    '  document.getElementById(\"logoutBtn\").addEventListener(\"click\",function(){sessionStorage.removeItem(\"ccs_admin_v2\");document.getElementById(\"app\").style.display=\"none\";document.getElementById(\"lock\").style.display=\"flex\";document.getElementById(\"pw\").value=\"\";});',
+"""
+          new = """    'function safeGet(id){return document.getElementById(id);}',
+    'function safeSessionGet(k){try{return sessionStorage.getItem(k);}catch(e){return null;}}',
+    'function safeSessionSet(k,v){try{sessionStorage.setItem(k,v);}catch(e){}}',
+    'function safeSessionRemove(k){try{sessionStorage.removeItem(k);}catch(e){}}',
+    'function unlock(){var lock=safeGet(\"lock\");var app=safeGet(\"app\");if(lock)lock.style.display=\"none\";if(app)app.style.display=\"block\";loadAll();}',
+    'function tryLogin(){var pwEl=safeGet(\"pw\");var err=safeGet(\"pwErr\");var pw=pwEl?pwEl.value:\"\";if(pw===PASS){safeSessionSet(\"ccs_admin_v2\",\"1\");unlock();}else{if(err)err.style.display=\"block\";if(pwEl)pwEl.value=\"\";}}',
+    // IIFE - script is at bottom of body, DOM is ready
+    \"(function(){try{\",
+    '  var authed=safeSessionGet(\"ccs_admin_v2\")===\"1\";',
+    '  var pwBtn=safeGet(\"pwBtn\");if(pwBtn)pwBtn.addEventListener(\"click\",tryLogin);',
+    '  var pwInput=safeGet(\"pw\");if(pwInput)pwInput.addEventListener(\"keydown\",function(e){if(e.key===\"Enter\")tryLogin();});',
+    '  var logoutBtn=safeGet(\"logoutBtn\");if(logoutBtn)logoutBtn.addEventListener(\"click\",function(){safeSessionRemove(\"ccs_admin_v2\");var app=safeGet(\"app\");var lock=safeGet(\"lock\");var pw=safeGet(\"pw\");if(app)app.style.display=\"none\";if(lock)lock.style.display=\"flex\";if(pw)pw.value=\"\";});',
+"""
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed = True
+          elif "function safeSessionGet" not in s:
+              raise SystemExit("Could not locate admin login bootstrap block")
+
+          old_end = '    "  if(authed)unlock();",\n    "})();",\n'
+          new_end = '    "  if(authed)unlock();",\n    "}catch(e){console.error(\\\"Admin boot failed\\\",e);}})();",\n'
+          if old_end in s:
+              s = s.replace(old_end, new_end, 1)
+              changed = True
+          elif 'Admin boot failed' not in s:
+              raise SystemExit("Could not locate admin IIFE end")
+
+          # Add a fallback renderCmsPanel only if the bundled file truly lacks one.
+          if "function renderCmsPanel(section,data)" not in s:
+              marker = "    `async function loadSection(section){var el=document.getElementById(\"cmsPanel_\"+section);if(!el)return;el.innerHTML=\"<span class='spin'></span> Loading...\";try{var r=await fetch(\"/api/content/\"+section);var d=await r.json();cmsData[section]=d.data;renderCmsPanel(section,d.data);}catch(e){el.innerHTML=\"<p style='color:#f87171'>\"+e.message+\"</p>\";}}`,\n"
+              fallback = marker + "    `function renderCmsPanel(section,data){var el=document.getElementById(\"cmsPanel_\"+section);if(!el)return;var json=JSON.stringify(data||{},null,2).replace(/</g,\"&lt;\");el.innerHTML=\"<div style='display:flex;gap:.75rem;margin-bottom:1rem'><button class='btn btn-outline btn-sm' onclick='saveCmsJson(\\\\\"\"+section+\"\\\\\")'>Save Draft</button><button class='btn btn-sm' style='background:#22c55e;color:#fff' onclick='saveCmsJsonAndPublish(\\\\\"\"+section+\"\\\\\")'>Save + Publish Live</button></div><textarea class='ftextarea' id='cmsJson_\"+section+\"' style='min-height:420px;font-family:monospace'>\"+json+\"</textarea>\";}`,
+    `function readCmsJson(section){var el=document.getElementById(\"cmsJson_\"+section);return el?JSON.parse(el.value):cmsData[section];}`,
+    `async function saveCmsJson(section){try{var data=readCmsJson(section);var r=await fetch(\"/api/content/\"+section,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify({data:data})});var d=await r.json();alert(d.ok?\"Saved as draft.\":\"Save error: \"+(d.error||\"unknown\"));}catch(e){alert(\"Error: \"+e.message);}}`,
+    `async function saveCmsJsonAndPublish(section){try{var data=readCmsJson(section);var r=await fetch(\"/api/content/\"+section,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify({data:data})});var d=await r.json();if(!d.ok){alert(\"Save error: \"+(d.error||\"unknown\"));return;}var p=await fetch(\"/api/publish\",{method:\"POST\"});var pd=await p.json();alert(pd.ok?\"Saved and published live!\":\"Saved but publish failed: \"+(pd.error||\"unknown\"));}catch(e){alert(\"Error: \"+e.message);}}`,\n"
+              if marker in s:
+                  s = s.replace(marker, fallback, 1)
+                  changed = True
+              else:
+                  raise SystemExit("Could not locate CMS loadSection marker for fallback renderer")
+
+          if not changed:
+              print("No changes needed")
+          p.write_text(s)
+          PY
+          node --check "$FILE"
+          git diff -- "$FILE"
+      - name: Commit patched Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- workers/contractor-v004/contractor-v004-template.js; then
+            echo "No Worker changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add workers/contractor-v004/contractor-v004-template.js
+          git commit -m "Fix admin login bootstrap"
+          git push
