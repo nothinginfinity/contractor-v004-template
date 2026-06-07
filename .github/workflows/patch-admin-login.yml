@@ -1,6 +1,7 @@
 name: Patch admin login runtime guard
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths:
@@ -27,28 +28,22 @@ jobs:
           s = p.read_text()
           changed = False
 
-          s2 = s.replace('var WORKER = "contractor-v003-2-afo";', 'var WORKER = "contractor-v004-template";', 1)
-          changed = changed or s2 != s
-          s = s2
+          replacements = [
+              ('var WORKER = "contractor-v003-2-afo";', 'var WORKER = "contractor-v004-template";'),
+              ('var contractor_v003_2_afo_default = {', 'var contractor_v004_template_default = {'),
+              ('contractor_v003_2_afo_default as default', 'contractor_v004_template_default as default'),
+              ('//# sourceMappingURL=contractor-v003-2-afo.js.map', '//# sourceMappingURL=contractor-v004-template.js.map'),
+          ]
+          for old, new in replacements:
+              if old in s:
+                  s = s.replace(old, new, 1)
+                  changed = True
 
-          s2 = s.replace('var contractor_v003_2_afo_default = {', 'var contractor_v004_template_default = {', 1)
-          changed = changed or s2 != s
-          s = s2
-          s2 = s.replace('contractor_v003_2_afo_default as default', 'contractor_v004_template_default as default', 1)
-          changed = changed or s2 != s
-          s = s2
-          s2 = s.replace('//# sourceMappingURL=contractor-v003-2-afo.js.map', '//# sourceMappingURL=contractor-v004-template.js.map', 1)
-          changed = changed or s2 != s
-          s = s2
-
-          # Ensure cmsData exists immediately after PASS in the browser jsLines array.
-          needle = "    'var PASS=\"' + ADMIN_PASS + '\";',\n"
-          insert = needle + "    'var cmsData={};',\n"
-          if needle in s and "    'var cmsData={};'," not in s and '"var cmsData={};",' not in s:
-              s = s.replace(needle, insert, 1)
+          pass_line = "    'var PASS=\"' + ADMIN_PASS + '\";',\n"
+          if pass_line in s and "    'var cmsData={};'," not in s and '"var cmsData={};",' not in s:
+              s = s.replace(pass_line, pass_line + "    'var cmsData={};',\n", 1)
               changed = True
 
-          # Make the login/bootstrap IIFE resilient to storage and missing-element errors.
           old = """    'function unlock(){document.getElementById(\"lock\").style.display=\"none\";document.getElementById(\"app\").style.display=\"block\";loadAll();}',
     'function tryLogin(){var pw=document.getElementById(\"pw\").value;if(pw===PASS){sessionStorage.setItem(\"ccs_admin_v2\",\"1\");unlock();}else{document.getElementById(\"pwErr\").style.display=\"block\";document.getElementById(\"pw\").value=\"\";}}',
     // IIFE â script is at bottom of body, DOM is ready
@@ -85,7 +80,6 @@ jobs:
           elif 'Admin boot failed' not in s:
               raise SystemExit("Could not locate admin IIFE end")
 
-          # Add a fallback renderCmsPanel only if the bundled file truly lacks one.
           if "function renderCmsPanel(section,data)" not in s:
               marker = "    `async function loadSection(section){var el=document.getElementById(\"cmsPanel_\"+section);if(!el)return;el.innerHTML=\"<span class='spin'></span> Loading...\";try{var r=await fetch(\"/api/content/\"+section);var d=await r.json();cmsData[section]=d.data;renderCmsPanel(section,d.data);}catch(e){el.innerHTML=\"<p style='color:#f87171'>\"+e.message+\"</p>\";}}`,\n"
               fallback = marker + "    `function renderCmsPanel(section,data){var el=document.getElementById(\"cmsPanel_\"+section);if(!el)return;var json=JSON.stringify(data||{},null,2).replace(/</g,\"&lt;\");el.innerHTML=\"<div style='display:flex;gap:.75rem;margin-bottom:1rem'><button class='btn btn-outline btn-sm' onclick='saveCmsJson(\\\\\"\"+section+\"\\\\\")'>Save Draft</button><button class='btn btn-sm' style='background:#22c55e;color:#fff' onclick='saveCmsJsonAndPublish(\\\\\"\"+section+\"\\\\\")'>Save + Publish Live</button></div><textarea class='ftextarea' id='cmsJson_\"+section+\"' style='min-height:420px;font-family:monospace'>\"+json+\"</textarea>\";}`,
@@ -96,11 +90,12 @@ jobs:
                   s = s.replace(marker, fallback, 1)
                   changed = True
               else:
-                  raise SystemExit("Could not locate CMS loadSection marker for fallback renderer")
+                  raise SystemExit("Could not locate CMS loadSection marker")
 
-          if not changed:
+          if changed:
+              p.write_text(s)
+          else:
               print("No changes needed")
-          p.write_text(s)
           PY
           node --check "$FILE"
           git diff -- "$FILE"
