@@ -1,51 +1,35 @@
 import app from "./contractor-v004-template.js";
 
-const ADMIN_PASS = "demo";
-
-function injectAdminRescue(html) {
-  const rescue = `<script id="admin-login-rescue">
+function openAdminForTesting(html) {
+  const css = `<style id="admin-open-for-testing-css">
+#lock{display:none!important;visibility:hidden!important;pointer-events:none!important;}
+#app{display:block!important;}
+</style>`;
+  const script = `<script id="admin-open-for-testing-script">
 (function(){
-  var PASS=${JSON.stringify(ADMIN_PASS)};
-  function byId(id){ return document.getElementById(id); }
-  function show(el, value){ if(el) el.style.display=value; }
-  function safeSessionSet(k,v){ try { sessionStorage.setItem(k,v); } catch(e) {} }
-  function safeSessionGet(k){ try { return sessionStorage.getItem(k); } catch(e) { return null; } }
-  function safeSessionRemove(k){ try { sessionStorage.removeItem(k); } catch(e) {} }
-  function unlockAdmin(){
-    show(byId("lock"), "none");
-    show(byId("app"), "block");
-    try { if (typeof loadAll === "function") loadAll(); else if (typeof loadStatus === "function") loadStatus(); } catch(e) { console.error("Admin load failed", e); }
+  function byId(id){return document.getElementById(id);}
+  function openAdmin(){
+    var lock=byId("lock");
+    var app=byId("app");
+    if(lock){lock.style.display="none";lock.style.visibility="hidden";lock.style.pointerEvents="none";}
+    if(app){app.style.display="block";}
+    try{sessionStorage.setItem("ccs_admin_v2","1");}catch(e){}
+    try{if(typeof loadAll==="function")loadAll();else if(typeof loadStatus==="function")loadStatus();}catch(e){console.error("Admin load failed",e);}
   }
-  function attemptLogin(){
-    var pwEl=byId("pw");
-    var err=byId("pwErr");
-    var pw=pwEl ? pwEl.value : "";
-    if(pw===PASS){
-      safeSessionSet("ccs_admin_v2", "1");
-      unlockAdmin();
-    } else {
-      show(err, "block");
-      if(pwEl) pwEl.value="";
-    }
-  }
-  function bindLogin(){
-    try {
-      window.tryLogin = attemptLogin;
-      window.unlock = unlockAdmin;
-      var btn=byId("pwBtn");
-      var pw=byId("pw");
-      var logout=byId("logoutBtn");
-      if(btn){ btn.onclick=function(e){ if(e) e.preventDefault(); attemptLogin(); }; }
-      if(pw){ pw.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); attemptLogin(); } }; }
-      if(logout){ logout.onclick=function(){ safeSessionRemove("ccs_admin_v2"); show(byId("app"), "none"); show(byId("lock"), "flex"); if(pw) pw.value=""; }; }
-      if(safeSessionGet("ccs_admin_v2")==="1") unlockAdmin();
-    } catch(e) { console.error("Admin login rescue failed", e); }
-  }
-  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", bindLogin); else bindLogin();
+  window.tryLogin=openAdmin;
+  window.unlock=openAdmin;
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",openAdmin);else openAdmin();
+  setTimeout(openAdmin,50);
+  setTimeout(openAdmin,250);
+  setTimeout(openAdmin,1000);
 })();
 </script>`;
-  if (html.includes("</body>")) return html.replace("</body>", rescue + "</body>");
-  return html + rescue;
+  let out = html;
+  if (out.includes("</head>")) out = out.replace("</head>", css + "</head>");
+  else out = css + out;
+  if (out.includes("</body>")) out = out.replace("</body>", script + "</body>");
+  else out += script;
+  return out;
 }
 
 export default {
@@ -57,8 +41,8 @@ export default {
       const html = await response.text();
       const headers = new Headers(response.headers);
       headers.set("Content-Type", "text/html;charset=UTF-8");
-      headers.set("Cache-Control", "no-store");
-      return new Response(injectAdminRescue(html), { status: response.status, headers });
+      headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+      return new Response(openAdminForTesting(html), { status: response.status, headers });
     }
     return response;
   }
