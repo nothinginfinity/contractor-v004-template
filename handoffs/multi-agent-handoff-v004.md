@@ -1,5 +1,5 @@
 # Multi-Agent Handoff Prompt — contractor-v004-template
-**Last updated:** 2026-06-07 | **Status:** ✅ Live and deployed
+**Last updated:** 2026-06-07 | **Status:** ✅ Live — v0.6.0 (Member Profiles & Contributor CMS)
 
 ---
 
@@ -16,12 +16,13 @@ Read this entire prompt before taking any action.
 ## WHAT THIS PLATFORM IS
 
 A full-stack contractor/service-business demo site that runs entirely on a single
-Cloudflare Worker (~113KB JS file). No Node server, no separate frontend build.
+Cloudflare Worker (~143KB JS file). No Node server, no separate frontend build.
 One JS file = entire backend + frontend. Built as a reusable template system.
 
 The platform is now proven and in active use. We have successfully:
 - Built and deployed the original: contractor-v003-2-afo (live, production)
 - Cloned it into a clean template repo: contractor-v004-template (live, deployed ✅)
+- Added Member Profiles & Contributor CMS (v0.6.0, live ✅)
 - Established a working fork/clone protocol for spinning up new site instances
 
 We are now in Phase 2: making customizations, upgrades, and industry-specific
@@ -41,6 +42,7 @@ variants using this template as the base.
 - Original: https://contractor-v003-2-afo.jaredtechfit.workers.dev
 - Template: https://contractor-v004-template.jaredtechfit.workers.dev
 - Admin (both): /admin — password: demo
+- Contributor portal: /contribute?token=<token> (create members via admin)
 
 ---
 
@@ -76,7 +78,7 @@ Add a new job entry pointing to workers/{new-slug}/
 The action auto-deploys on every push to that path.
 
 ### Step 5 — Paste the full worker source
-The worker JS file is ~113KB — too large to commit via MCP JSON tools.
+The worker JS file is ~143KB — too large to commit via MCP JSON tools.
 
 MANUAL METHOD (always works):
   1. Open Cloudflare Dashboard → Workers & Pages → contractor-v003-2-afo → Edit Code
@@ -85,8 +87,8 @@ MANUAL METHOD (always works):
   4. The GitHub Action fires automatically and deploys to Cloudflare
 
 AI AGENT METHOD (if bash_tool / wrangler available):
-  - Claude with bash_tool can run: wrangler deploy from the worker directory
-  - Or fetch source via afo-r2-source-backup-reader-mcp and commit
+  - git clone the public repo, edit the JS, then run: wrangler deploy from the worker directory
+  - This is the primary deploy path for large workers (>60KB can't go via MCP JSON)
 
 ### Step 6 — Add CLOUDFLARE_API_TOKEN secret
 In the new repo: Settings → Secrets and variables → Actions → New repository secret
@@ -94,7 +96,12 @@ Name: CLOUDFLARE_API_TOKEN
 Value: (get from Cloudflare dashboard or Jared)
 This is a one-time manual step per repo — no AI can do this for you.
 
-### Step 7 — Verify deploy
+### Step 7 — Run D1 schema migrations
+Run each SQL statement separately (D1 one-statement-at-a-time rule):
+  - See workers/contractor-v004/schema.sql for the full schema
+  - Use cloudflare-multipart-mcp:execute_d1_sql or wrangler d1 execute
+
+### Step 8 — Verify deploy
 Check the Actions tab in the new repo. If green → site is live.
 URL will be: https://{worker-name}.jaredtechfit.workers.dev
 
@@ -161,18 +168,33 @@ Each paying customer gets fully isolated resources:
 | Resource | Purpose |
 |---|---|
 | Worker | Serves entire site — frontend + backend + API |
-| D1 Database | CMS data, CRM (leads/callbacks), articles, media index, knowledge seeds, snapshot |
-| R2 Bucket | Uploaded images, audio, PDFs |
+| D1 Database | CMS data, CRM (leads/callbacks), articles, media index, knowledge seeds, snapshot, members, submissions |
+| R2 Bucket | Uploaded images, audio, PDFs, contributor uploads |
 | Vectorize Index | Article + knowledge seed embeddings for RAG chat |
 | AI Binding | LLaMA 3.1 8B (chat) + BGE embeddings (vectorize) |
 
+### D1 Tables
+  site_content       — CMS sections (JSON blobs)
+  site_snapshot      — Pre-rendered homepage HTML
+  leads              — Lead form submissions
+  callbacks          — Callback requests
+  articles           — Blog/resource articles (RAG source)
+  media_library      — R2 file index
+  knowledge_seeds    — Admin-managed RAG knowledge base
+  chats              — AI chat log
+  members            — Contributor accounts (token-auth)
+  submissions        — Contributor content queue (pending/approved/rejected)
+
 ### Key Worker Functions
-  renderPublicHTML(content, articles)  → renders full homepage HTML from D1
-  handlePublish(env)                   → re-renders + saves snapshot to D1
-  handleHome(env)                      → serves snapshot (instant page load)
-  buildAdmin()                         → full admin panel HTML (password-gated)
-  loadContent(env)                     → loads all site_content sections from D1
-  getContactConstants(env)             → reads phone/company/license from D1
+  renderPublicHTML(content, articles)        → renders full homepage HTML from D1
+  handlePublish(env)                         → re-renders + saves snapshot to D1
+  handleHome(env)                            → serves snapshot (instant page load)
+  buildAdmin()                               → full admin panel HTML (password-gated)
+  loadContent(env)                           → loads all site_content sections from D1
+  getContactConstants(env)                   → reads phone/company/license from D1
+  handleContributorPortal(request, env)      → token-gated contributor portal
+  handleMemberSubmit(request, env)           → contributor uploads photo/article/note
+  handleAdminSubmissionApprove(request, env) → approve → moves to articles/media_library
 
 ---
 
@@ -188,7 +210,7 @@ Each paying customer gets fully isolated resources:
    Run each CREATE TABLE / INSERT separately.
 
 3. WORKER SIZE LIMIT FOR MCP DEPLOY
-   Worker is ~113KB. Any MCP tool that passes script as a JSON string param will fail.
+   Worker is ~143KB. Any MCP tool that passes script as a JSON string param will fail.
    Always deploy via: wrangler deploy CLI or the GitHub Action.
 
 4. ALWAYS INCLUDE ALL 4 BINDINGS
@@ -203,6 +225,10 @@ Each paying customer gets fully isolated resources:
 6. REGEX IN EMBEDDED JS
    Never write a regex literal inside a string-concatenated JS block.
    Always use: new RegExp(...)
+
+7. CONTRIBUTOR TOKEN SECURITY
+   Always validate token against members table on every /api/member/* route.
+   Never trust client-sent member_id alone. Token in Bearer header or body field.
 
 ---
 
@@ -220,22 +246,21 @@ Never ask Claude/ChatGPT to create GitHub repos — use Alice.
 
 ---
 
-## CURRENT PHASE: CUSTOMIZATION + INDUSTRY VARIANTS
+## CURRENT PHASE: v0.6.0 — CONTRIBUTOR CMS LIVE
 
-The clone/fork protocol is proven. We are now building on top of it:
+Implemented and deployed 2026-06-07:
+- Member Profiles & Contributor CMS (spec: shared/specs/member-profiles-contributor-cms-v0.1.md)
+- /contribute portal (token-gated, mobile-first)
+- Full submission workflow: submit → admin reviews → approve/reject → live
 
-- contractor-v004-template is the clean base for all new forks
-- Next work: customizations, upgrades, and industry-specific variants
-- Examples: roofing, plumbing, landscaping, HVAC, home cleaning, pool service
-- Each variant = new GitHub repo + new Cloudflare Worker name + shared DB (demo) or new DB (paid)
-
-Upcoming features to add across variants:
-  [ ] Resend email notifications for new leads/callbacks
+Upcoming features:
+  [ ] Resend email notifications for new leads/callbacks + new submissions
   [ ] Voice recorder widget (in-browser mic → R2 → linked to lead)
   [ ] Per-user admin auth (replace hardcoded 'demo' password)
   [ ] Analytics dashboard (lead source, weekly counts, conversion)
   [ ] Industry-specific service/content presets per variant
   [ ] Custom domain attachment for paid customers
+  [ ] v0.2 contributor auth (email/password instead of token links)
 
 ---
 
@@ -246,17 +271,29 @@ Public:
   GET  /articles                  Articles index
   GET  /articles/{slug}           Individual article
   GET  /media/serve/{r2_key}      Serve file from R2
+  GET  /contribute                Contributor portal (token in ?token= query param)
   POST /chat                      AI chat (RAG + estimate flow)
   POST /leads                     Submit lead form
   POST /callback                  Submit callback request
   GET  /api/status                Worker health + binding status
 
-Admin (password-gated):
+Contributor (token-gated via Bearer header or ?token= param):
+  GET  /api/member/me             Validate token, return member info
+  POST /api/member/submit         Submit article/photo/note (multipart or JSON)
+  GET  /api/member/submissions    List own submissions + status
+
+Admin (ADMIN_PASS-gated via /admin panel JS):
   POST /api/publish               Re-render + save site snapshot
-  GET/POST /api/content/{section} Get/save CMS section (services/projects/reviews/process/contact)
+  GET/POST /api/content/{section} Get/save CMS section
   GET  /api/admin/leads           List leads (?format=csv for export)
   PATCH /api/admin/leads/{id}     Update lead status
   GET  /api/admin/callbacks       List callbacks
+  GET  /api/admin/members         List all members
+  POST /api/admin/members         Create new member (returns portal_url)
+  DELETE /api/admin/members/{id}  Deactivate member
+  GET  /api/admin/submissions     List submissions (?status=all for all)
+  POST /api/admin/submissions/{id}/approve  Approve → moves to articles/media
+  POST /api/admin/submissions/{id}/reject   Reject with optional note
   POST /api/admin/articles/{id}   Save article (use 'new' to create)
   POST /api/knowledge/{id}        Save knowledge seed (auto-embeds to Vectorize)
   POST /api/seed                  Re-embed all articles to Vectorize
@@ -268,9 +305,9 @@ Admin (password-gated):
 1. Read the repo you're working in — check START-HERE.md and handoffs/ folder
 2. Confirm which site instance you're modifying (v003-2 = original, v004 = template, or a new fork)
 3. Confirm whether this is a DEMO (shared DB) or PAID CUSTOMER (needs isolated resources)
-4. If making code changes: edit the worker JS file in GitHub, push to main, let the Action deploy
+4. If making code changes: git clone the public repo, edit JS on disk, wrangler deploy, then commit JS to GitHub
 5. If making data changes: use Claude + cloudflare-multipart-mcp to run D1 SQL
-6. Never deploy a 113KB+ worker via MCP JSON tool — use wrangler deploy or GitHub Action only
+6. Never deploy a 143KB+ worker via MCP JSON tool — use wrangler deploy or GitHub Action only
 
 ---
 
