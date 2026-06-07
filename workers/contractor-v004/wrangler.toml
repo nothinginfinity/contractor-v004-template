@@ -1,5 +1,5 @@
 name = "contractor-v004-template"
-main = "contractor-v004-template.js"
+main = "admin-login-wrapper.js"
 compatibility_date = "2024-01-01"
 
 [[d1_databases]]
